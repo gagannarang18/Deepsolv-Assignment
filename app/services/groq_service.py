@@ -7,7 +7,7 @@ import logging
 class GroqService:
     def __init__(self):
         self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
         
     async def extract_brand_info(self, html_content: str, url: str) -> Dict[str, Any]:
         """Extract brand information from HTML content using Groq"""
