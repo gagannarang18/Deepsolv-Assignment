@@ -63,64 +63,73 @@ class ShopifyScraper:
         return products
 
     def parse_product(self, product_data: Dict[str, Any]) -> ProductSchema:
-        """Parse product data into ProductSchema"""
+        """Parse product data into ProductSchema with defensive programming"""
         try:
+            # Handle images safely
             images = []
-            if 'images' in product_data:
-                images = [img.get('src', '') for img in product_data['images']]
+            if 'images' in product_data and isinstance(product_data['images'], list):
+                images = [img.get('src', '') for img in product_data['images'] if isinstance(img, dict)]
             
+            # Handle variants safely
             variants = product_data.get('variants', [])
             price = None
-            if variants:
+            if variants and isinstance(variants, list):
                 price = str(variants[0].get('price', '0'))
             
+            # Handle tags safely - this was causing the "unhashable type: list" error
             tags = []
             if 'tags' in product_data:
                 if isinstance(product_data['tags'], str):
-                    tags = [tag.strip() for tag in product_data['tags'].split(',')]
+                    tags = [tag.strip() for tag in product_data['tags'].split(',') if tag.strip()]
+                elif isinstance(product_data['tags'], list):
+                    tags = [str(tag) for tag in product_data['tags']]  # Ensure all tags are strings
                 else:
-                    tags = product_data['tags']
+                    tags = []
             
             return ProductSchema(
                 id=str(product_data.get('id', '')),
-                title=product_data.get('title', ''),
-                handle=product_data.get('handle', ''),
+                title=product_data.get('title', '') or '',
+                handle=product_data.get('handle', '') or '',
                 price=price,
-                available=any(variant.get('available', False) for variant in variants),
+                available=any(variant.get('available', False) for variant in variants if isinstance(variant, dict)),
                 images=images,
-                variants=variants,
+                variants=variants if isinstance(variants, list) else [],
                 tags=tags,
-                vendor=product_data.get('vendor', ''),
-                product_type=product_data.get('product_type', ''),
-                description=product_data.get('body_html', '')
+                vendor=product_data.get('vendor', '') or '',
+                product_type=product_data.get('product_type', '') or '',
+                description=product_data.get('body_html', '') or ''
             )
         except Exception as e:
-            logging.error(f"Error parsing product: {str(e)}")
+            logging.error(f"Error parsing product: {str(e)}", exc_info=True)
             return ProductSchema(title="Parse Error", handle="error")
 
     async def extract_hero_products(self, html: str, all_products: List[ProductSchema]) -> List[ProductSchema]:
         """Extract hero products from homepage"""
-        soup = BeautifulSoup(html, 'html.parser')
-        hero_products = []
-        
-        # Look for product links on homepage
-        product_links = soup.find_all('a', href=re.compile(r'/products/'))
-        product_handles = set()
-        
-        for link in product_links[:10]:  # Limit to first 10 found
-            href = link.get('href', '')
-            if '/products/' in href:
-                handle = href.split('/products/')[-1].split('?')[0].split('#')
-                product_handles.add(handle)
-        
-        # Match with actual products
-        for product in all_products:
-            if product.handle in product_handles:
-                hero_products.append(product)
-                if len(hero_products) >= 8:  # Reasonable limit
-                    break
-                    
-        return hero_products
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            hero_products = []
+            
+            # Look for product links on homepage
+            product_links = soup.find_all('a', href=re.compile(r'/products/'))
+            product_handles = set()
+            
+            for link in product_links[:10]:  # Limit to first 10 found
+                href = link.get('href', '')
+                if '/products/' in href:
+                    handle = href.split('/products/')[-1].split('?')[0].split('#')
+                    product_handles.add(handle)
+            
+            # Match with actual products
+            for product in all_products:
+                if product.handle in product_handles:
+                    hero_products.append(product)
+                    if len(hero_products) >= 8:  # Reasonable limit
+                        break
+                        
+            return hero_products
+        except Exception as e:
+            logging.error(f"Error extracting hero products: {str(e)}")
+            return []
 
     async def extract_policies(self, base_url: str) -> PolicyInfo:
         """Extract policy information"""
@@ -135,46 +144,55 @@ class ShopifyScraper:
         
         for policy_type, urls in policy_urls.items():
             for url_path in urls:
-                full_url = urljoin(base_url, url_path)
-                html, status = await self.fetch_url(full_url)
-                if status == 200 and html:
-                    setattr(policies, policy_type, full_url)
-                    break  # Found policy, move to next type
+                try:
+                    full_url = urljoin(base_url, url_path)
+                    html, status = await self.fetch_url(full_url)
+                    if status == 200 and html:
+                        setattr(policies, policy_type, full_url)
+                        break  # Found policy, move to next type
+                except Exception as e:
+                    logging.error(f"Error extracting policy {policy_type}: {str(e)}")
                     
         return policies
 
     def extract_important_links(self, html: str, base_url: str) -> Dict[str, str]:
         """Extract important links from HTML"""
-        soup = BeautifulSoup(html, 'html.parser')
-        important_links = {}
-        
-        # Common important link patterns
-        link_patterns = {
-            'Contact Us': ['/pages/contact', '/contact', '/contact-us'],
-            'About Us': ['/pages/about', '/about', '/about-us'],
-            'Order Tracking': ['/account/login', '/track', '/tracking'],
-            'Blog': ['/blogs', '/blog'],
-            'Support': ['/pages/support', '/support', '/help'],
-            'Size Guide': ['/pages/size-guide', '/size-guide'],
-            'FAQ': ['/pages/faq', '/faq', '/pages/frequently-asked-questions']
-        }
-        
-        # Find links in navigation and footer
-        for link_name, patterns in link_patterns.items():
-            for pattern in patterns:
-                link_elem = soup.find('a', href=re.compile(pattern, re.IGNORECASE))
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
-                        full_url = urljoin(base_url, href)
-                        important_links[link_name] = full_url
-                        break
-                        
-        return important_links
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            important_links = {}
+            
+            # Common important link patterns
+            link_patterns = {
+                'Contact Us': ['/pages/contact', '/contact', '/contact-us'],
+                'About Us': ['/pages/about', '/about', '/about-us'],
+                'Order Tracking': ['/account/login', '/track', '/tracking'],
+                'Blog': ['/blogs', '/blog'],
+                'Support': ['/pages/support', '/support', '/help'],
+                'Size Guide': ['/pages/size-guide', '/size-guide'],
+                'FAQ': ['/pages/faq', '/faq', '/pages/frequently-asked-questions']
+            }
+            
+            # Find links in navigation and footer
+            for link_name, patterns in link_patterns.items():
+                for pattern in patterns:
+                    link_elem = soup.find('a', href=re.compile(pattern, re.IGNORECASE))
+                    if link_elem:
+                        href = link_elem.get('href')
+                        if href:
+                            full_url = urljoin(base_url, href)
+                            important_links[link_name] = full_url
+                            break
+                            
+            return important_links
+        except Exception as e:
+            logging.error(f"Error extracting important links: {str(e)}")
+            return {}
 
     async def scrape_shopify_store(self, url: str) -> BrandInsights:
         """Main method to scrape Shopify store"""
         try:
+            logging.info(f"Starting to scrape Shopify store: {url}")
+            
             # Validate and normalize URL
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
@@ -187,6 +205,8 @@ class ShopifyScraper:
                     status="error",
                     error_message=f"Website not accessible. Status code: {status}"
                 )
+
+            logging.info("Homepage fetched successfully")
 
             # Check if it's likely a Shopify store
             if 'shopify' not in html.lower() and 'cdn.shopify.com' not in html:
@@ -201,13 +221,16 @@ class ShopifyScraper:
 
             # Get all products
             products_data = await self.get_products_json(url)
+            logging.info(f"Found {len(products_data)} products")
             all_products = [self.parse_product(product) for product in products_data]
             
             # Extract hero products
             hero_products = await self.extract_hero_products(html, all_products)
+            logging.info(f"Extracted {len(hero_products)} hero products")
             
             # Extract brand info using Groq
             brand_info = await self.groq_service.extract_brand_info(html, url)
+            logging.info("Brand info extracted using Groq")
             
             # Extract FAQs
             faq_html, _ = await self.fetch_url(urljoin(url, '/pages/faq'))
@@ -216,12 +239,15 @@ class ShopifyScraper:
             faqs_data = await self.groq_service.extract_faqs(faq_html)
             faqs = [FAQ(question=faq.get('question', ''), answer=faq.get('answer', '')) 
                    for faq in faqs_data if faq.get('question') and faq.get('answer')]
+            logging.info(f"Extracted {len(faqs)} FAQs")
             
             # Extract policies
             policies = await self.extract_policies(url)
+            logging.info("Policies extracted")
             
             # Extract important links
             important_links = self.extract_important_links(html, url)
+            logging.info(f"Extracted {len(important_links)} important links")
             
             # Build contact info
             contact_info = ContactInfo(
@@ -240,6 +266,8 @@ class ShopifyScraper:
                 linkedin=social_data.get('linkedin')
             )
             
+            logging.info("Successfully completed scraping")
+            
             return BrandInsights(
                 website_url=url,
                 brand_name=brand_info.get('brand_name', ''),
@@ -256,7 +284,7 @@ class ShopifyScraper:
             )
             
         except Exception as e:
-            logging.error(f"Error scraping {url}: {str(e)}")
+            logging.error(f"Error scraping {url}: {str(e)}", exc_info=True)
             return BrandInsights(
                 website_url=url,
                 status="error",

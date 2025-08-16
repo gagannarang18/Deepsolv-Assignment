@@ -13,22 +13,26 @@ async def get_brand_insights(request: InsightRequest):
     Fetch brand insights from a Shopify store URL
     """
     try:
+        logging.info(f"Processing insights request for: {request.website_url}")
+        
         async with ShopifyScraper() as scraper:
             insights = await scraper.scrape_shopify_store(str(request.website_url))
             
             if insights.status == "error":
+                logging.error(f"Scraper error: {insights.error_message}")
                 if "not accessible" in insights.error_message.lower():
                     raise HTTPException(status_code=401, detail=insights.error_message)
                 else:
                     raise HTTPException(status_code=500, detail=insights.error_message)
                     
+            logging.info(f"Successfully extracted insights for {request.website_url}")
             return insights
             
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred")
+        logging.error(f"Unexpected error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/competitor-analysis", response_model=CompetitorAnalysis)
 async def get_competitor_analysis(request: InsightRequest):
@@ -68,7 +72,7 @@ async def get_competitor_analysis(request: InsightRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error in competitor analysis: {str(e)}")
+        logging.error(f"Error in competitor analysis: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to perform competitor analysis")
 
 @router.get("/health")
